@@ -13,9 +13,8 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Пакет generator/ и тесты; запуск: python -m generator
-COPY generator ./generator
-COPY tests ./tests
+# Весь пакет целиком: /app/generator -> python -m generator
+COPY . ./generator
 
 RUN useradd --create-home --uid 10001 app \
     && chown -R app:app /app
