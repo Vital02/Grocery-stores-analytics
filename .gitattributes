@@ -1,0 +1,20 @@
+# Нормализация переводов строк: скрипты должны попадать в Linux-контейнеры
+# с LF, иначе bash падает на "bad interpreter" / "\r: command not found".
+* text=auto eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
+*.ipynb text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+
+# Windows-скрипты, если появятся, оставляем с CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Бинарные файлы не трогаем.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.woff2 binary
