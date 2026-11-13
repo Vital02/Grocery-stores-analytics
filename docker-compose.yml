@@ -1,0 +1,115 @@
+# =============================================================================
+#  Продуктовая сеть: поток продаж -> ClickHouse -> Superset / Jupyter
+#
+#  Запуск:  cp .env.example .env && docker compose up -d --build
+#  Остановка: docker compose down          (данные остаются в volumes)
+#  Полная очистка: docker compose down -v
+# =============================================================================
+name: ${COMPOSE_PROJECT_NAME:-grocery}
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Общие переменные ClickHouse для сервисов-клиентов.
+# Внутри docker-сети порт всегда 8123, независимо от проброса на хост.
+x-clickhouse-client: &clickhouse-client
+  CLICKHOUSE_HOST: clickhouse
+  CLICKHOUSE_PORT: "8123"
+  CLICKHOUSE_DB: ${CLICKHOUSE_DB:-grocery}
+  CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+  CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_secret}
+  CLICKHOUSE_SECURE: "false"
+  TZ: ${TZ:-Asia/Vladivostok}
+
+services:
+  # ---------------------------------------------------------------------------
+  # Аналитическая СУБД
+  # ---------------------------------------------------------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: grocery-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-grocery}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse_secret}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      # Скрипты init идемпотентны (IF NOT EXISTS), поэтому выполняем их при
+      # каждом старте: если MV когда-то не создались, они появятся при
+      # следующем запуске, а не останутся «тихо» отсутствующими.
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "1"
+      TZ: ${TZ:-Asia/Vladivostok}
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT_HOST:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT_HOST:-9000}:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      # init-скрипты применяются автоматически при первом старте
+      - ./clickhouse/init:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # /ping отвечает до аутентификации (этим же способом готовность проверяет
+      # сам entrypoint образа), поэтому healthcheck не зависит от пароля,
+      # клиента и версии users.d.
+      test: ["CMD-SHELL", "wget --spider -q -T 2 http://127.0.0.1:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 60s
+    logging: *default-logging
+    networks: [grocery-net]
+
+  # ---------------------------------------------------------------------------
+  # Генератор потока продаж
+  # ---------------------------------------------------------------------------
+  generator:
+    build:
+      context: ./generator
+    image: grocery-generator:local
+    container_name: grocery-generator
+    restart: unless-stopped
+    # даём время корректно сбросить буфер при остановке (retry + backoff)
+    stop_grace_period: 60s
+    environment:
+      <<: *clickhouse-client
+      GENERATOR_SEED: ${GENERATOR_SEED:-42}
+      GENERATOR_INTERVAL_SECONDS: ${GENERATOR_INTERVAL_SECONDS:-2}
+      GENERATOR_BATCH_SIZE: ${GENERATOR_BATCH_SIZE:-20}
+      GENERATOR_ORDERS_PER_MINUTE: ${GENERATOR_ORDERS_PER_MINUTE:-60}
+      GENERATOR_ANOMALY_PROBABILITY: ${GENERATOR_ANOMALY_PROBABILITY:-0.005}
+      GENERATOR_ANOMALY_STRENGTH: ${GENERATOR_ANOMALY_STRENGTH:-3}
+      GENERATOR_STORE_COUNT: ${GENERATOR_STORE_COUNT:-6}
+      GENERATOR_PRODUCT_COUNT: ${GENERATOR_PRODUCT_COUNT:-90}
+      GENERATOR_BACKFILL_HOURS: ${GENERATOR_BACKFILL_HOURS:-24}
+      GENERATOR_HEALTH_PORT: ${GENERATOR_HEALTH_PORT:-8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)\"",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    logging: *default-logging
+    networks: [grocery-net]
+
+networks:
+  grocery-net:
+    driver: bridge
+
+volumes:
+  clickhouse_data:
+  clickhouse_logs:

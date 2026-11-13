@@ -3,72 +3,62 @@
 Учебный проект: end-to-end система сбора и анализа потока продаж продуктовой
 сети. Генератор событий → ClickHouse → BI (Apache Superset) и Jupyter.
 
-**Статус:** в работе. Первый этап — генератор потока продаж. Архитектура
-повторяет эталонную платформу потоковой генерации: домен отделён от генерации,
-генерация — от хранилища (порт `Repository`), оркестрация — в сервисе.
+**Статус:** в работе. Хранилище готово и подключено к генератору: ClickHouse
+хранит поток позиций чеков, витрины считают агрегаты, Materialized View
+наполняются при каждой вставке — в реальном времени.
 
 ---
 
 ## Что уже сделано
 
-- [x] Доменные модели: `Store`, `Product`, `SaleLine` — «чистые» объекты без
-      знания о БД (`generator/models.py`)
-- [x] Справочники сети: магазины с профилями формата, каталог SKU с ценами и
-      маржой (`generator/generation/catalog.py`)
-- [x] Сезонность чистыми функциями времени: суточная волна, день недели,
-      годовой цикл, «зарплатные» дни (`generation/seasonality.py`)
-- [x] Аномалии как типы: `PANIC_BUYING` / `BULK_PURCHASE` / `PRICE_GLITCH`,
-      детерминированный промо-календарь (`generation/anomalies.py`)
-- [x] Самплеры чека — паттерн Strategy: размер корзины, цена, количество,
-      скидка (`generation/metrics.py`)
-- [x] Сборка чеков и батчей с учётом сезонности (`generation/basket.py`)
-- [x] Сервис генерации «произвести батч → записать» с инъекцией часов и сна
-      (`service/generator.py`)
-- [x] Retry с экспоненциальным backoff (`retry.py`)
-- [x] In-memory репозиторий: генератор работает без какой-либо БД
-      (`repository/in_memory.py`)
-- [x] Конфигурация из env с префиксом `GENERATOR_*` (`config.py`)
-- [x] 55 юнит-тестов (`generator/tests/`, unittest)
+- [x] Генератор потока продаж: сезонность, промо, аномалии, батчи, retry
+- [x] Схема БД `grocery`: справочники `stores` / `products` и поток `sales`
+- [x] Витрины `sales_per_minute` (`SummingMergeTree`) и `category_hourly`
+      (`AggregatingMergeTree`)
+- [x] Materialized View, которые наполняют витрины при вставке
+- [x] ClickHouse-репозиторий: батчевый `INSERT`, идемпотентное создание схемы,
+      backfill истории при пустой БД (`generator/repository/clickhouse.py`)
+- [x] docker-compose: сервисы ClickHouse и генератора с healthcheck
+- [ ] Дашборд Superset
+- [ ] Ноутбук с анализом
 
-## Быстрый старт (генератор без Docker)
+## Быстрый старт
 
 ```bash
-pip install -r generator/requirements.txt
+cp .env.example .env
+docker compose up -d
 
-# чеки без записи в БД: статистика по выручке, аномалиям, промо
-python -m generator --dry-run 5
+# поток пошёл: количество строк растёт каждые пару секунд
+docker compose exec clickhouse clickhouse-client \
+  --user=default --password=clickhouse_secret \
+  -q "SELECT count() AS rows, max(event_time) FROM grocery.sales"
+```
 
-# справочники + один батч в in-memory хранилище
-python -m generator --once
+Проверка витрин и Materialized View:
 
-# юнит-тесты
-cd generator && python -m unittest discover -s tests -v
+```sql
+SHOW TABLES FROM grocery;
+SELECT name FROM system.tables WHERE name LIKE 'mv_%';
+SELECT category, sumMerge(revenue_state) AS revenue
+FROM grocery.category_hourly GROUP BY category ORDER BY revenue DESC;
 ```
 
 ## Структура
 
 ```
 .
-├── README.md
-├── .gitignore / .gitattributes
-└── generator/
-    ├── cli.py               # точка входа: python -m generator
-    ├── config.py            # pydantic-settings, GENERATOR_*
-    ├── models.py            # домен: Store, Product, SaleLine
-    ├── retry.py             # RetryPolicy (экспоненциальный backoff)
-    ├── health.py            # /healthz, /readyz, /metrics
-    ├── Dockerfile
-    ├── generation/          # «как генерировать»: seasonality, anomalies,
-    │                        #  metrics (Strategy), catalog, basket
-    ├── repository/          # порт Repository + in_memory реализация
-    ├── service/             # оркестратор цикла генерации
-    └── tests/               # 55 юнит-тестов
+├── docker-compose.yml     # ClickHouse + генератор
+├── .env.example
+├── clickhouse/init/       # схема, витрины, Materialized View
+│   ├── 01_schema.sql
+│   ├── 02_aggregates.sql
+│   └── 03_materialized_views.sql
+└── generator/             # генератор потока (см. generator/README-описание
+                           # в предыдущем этапе) + repository/clickhouse.py
 ```
 
 ## Дальше по плану
 
-1. Хранилище ClickHouse: схема `grocery`, витрины и Materialized View;
-   ClickHouse-реализация репозитория и docker-compose.
-2. Superset: подключение к ClickHouse, датасеты, дашборд и фильтры.
-3. Jupyter: аналитические запросы и графики.
-4. Документация, проверки и runbook.
+1. Superset: подключение к ClickHouse, датасеты, дашборд и фильтры.
+2. Jupyter: аналитические запросы и графики.
+3. Документация, проверки и runbook.
