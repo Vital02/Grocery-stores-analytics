@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS grocery.sales
     category       LowCardinality(String),
     quantity       Decimal(10, 3),
     unit_price     Decimal(10, 2),
-    discount_pct   Float32,
+    discount_rate  Decimal(5, 4),  -- доля скидки 0..1: 0.1500 = 15% (не проценты)
     revenue        Decimal(12, 2),
     cost_amount    Decimal(12, 2),
     margin         Decimal(12, 2),

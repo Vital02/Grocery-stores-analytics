@@ -168,7 +168,7 @@ class OrderGenerator:
             category=product.category,
             quantity=quantity,
             unit_price=unit_price,
-            discount_pct=round(discount, 4),
+            discount_rate=round(discount, 4),
             revenue=revenue,
             cost_amount=cost_amount,
             margin=money(float(revenue) - float(cost_amount)),

@@ -124,7 +124,7 @@ class SaleLine:
     category: str
     quantity: Decimal
     unit_price: Decimal
-    discount_pct: float
+    discount_rate: float  # доля скидки 0..1: 0.1500 = 15%
     revenue: Decimal
     cost_amount: Decimal
     margin: Decimal
@@ -147,7 +147,7 @@ class SaleLine:
             self.category,
             self.quantity,
             self.unit_price,
-            self.discount_pct,
+            self.discount_rate,
             self.revenue,
             self.cost_amount,
             self.margin,
@@ -197,7 +197,7 @@ SALES_COLUMNS = (
     "category",
     "quantity",
     "unit_price",
-    "discount_pct",
+    "discount_rate",
     "revenue",
     "cost_amount",
     "margin",

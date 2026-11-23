@@ -119,7 +119,7 @@ class ClickHouseRepository(Repository):
                 category LowCardinality(String),
                 quantity Decimal(10, 3),
                 unit_price Decimal(10, 2),
-                discount_pct Float32,
+                discount_rate Decimal(5, 4),
                 revenue Decimal(12, 2),
                 cost_amount Decimal(12, 2),
                 margin Decimal(12, 2),
